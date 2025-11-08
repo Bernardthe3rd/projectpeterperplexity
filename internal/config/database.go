@@ -13,32 +13,39 @@ import (
 var DB *gorm.DB
 
 func ConnectDatabase() {
-	// Load .env file
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file:", err)
+	// Try to load .env file (works locally, fails on Railway - that's OK!)
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, using environment variables from system")
 	}
 
-	// Get required environment variables (NO defaults!)
-	host := os.Getenv("DB_HOST")
-	port := os.Getenv("DB_PORT")
-	user := os.Getenv("DB_USER")
-	password := os.Getenv("DB_PASSWORD")
-	dbname := os.Getenv("DB_NAME")
+	// Get environment variables (works both locally and on Railway)
+	dbHost := os.Getenv("DB_HOST")
+	dbUser := os.Getenv("DB_USER")
+	dbPassword := os.Getenv("DB_PASSWORD")
+	dbName := os.Getenv("DB_NAME")
+	dbPort := os.Getenv("DB_PORT")
 
-	// Check if all required variables are set
-	if host == "" || port == "" || user == "" || dbname == "" {
-		log.Fatal("Missing required database environment variables. Check your .env file!")
+	// Validate required variables
+	if dbHost == "" || dbUser == "" || dbPassword == "" || dbName == "" {
+		log.Fatal("Missing required database environment variables")
 	}
 
-	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=Europe/Amsterdam",
-		host, user, password, dbname, port)
+	// Default port if not set
+	if dbPort == "" {
+		dbPort = "5432"
+	}
 
-	database, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	dsn := fmt.Sprintf(
+		"host=%s user=%s password=%s dbname=%s port=%s sslmode=require",
+		dbHost, dbUser, dbPassword, dbName, dbPort,
+	)
+
+	var err error
+	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+
 	if err != nil {
 		log.Fatal("Failed to connect to database:", err)
 	}
 
-	DB = database
-	fmt.Printf("✅ Database connected successfully to %s@%s:%s/%s!\n", user, host, port, dbname)
+	fmt.Printf("✅ Database connected to %s/%s!\n", dbHost, dbName)
 }
