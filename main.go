@@ -20,7 +20,10 @@ func main() {
 
 	// CORS setup
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000"},
+		AllowOrigins: []string{
+			"http://localhost:3000",                            // Local development
+			"https://front-end-production-ad0d.up.railway.app", // Railway frontend URL
+		},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		AllowCredentials: true,
