@@ -2,13 +2,41 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"projectpeterperplexity/internal/config"
 	"projectpeterperplexity/internal/handlers"
 	"projectpeterperplexity/internal/middleware"
+	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/ulule/limiter/v3"
+	ginlimiter "github.com/ulule/limiter/v3/drivers/middleware/gin"
+	"github.com/ulule/limiter/v3/drivers/store/memory"
 )
+
+// Rate limiters setup
+func setupLoginRateLimiter() gin.HandlerFunc {
+	// 5 login attempts per 15 minutes
+	rate := limiter.Rate{
+		Period: 15 * time.Minute,
+		Limit:  5,
+	}
+	store := memory.NewStore()
+	instance := limiter.New(store, rate)
+	return ginlimiter.NewMiddleware(instance)
+}
+
+func setupGlobalRateLimiter() gin.HandlerFunc {
+	// 100 requests per minute globally
+	rate := limiter.Rate{
+		Period: 1 * time.Minute,
+		Limit:  100,
+	}
+	store := memory.NewStore()
+	instance := limiter.New(store, rate)
+	return ginlimiter.NewMiddleware(instance)
+}
 
 func main() {
 	// Database setup
@@ -18,24 +46,29 @@ func main() {
 	// Gin router
 	r := gin.Default()
 
+	// Global rate limiter (applies to all routes)
+	r.Use(setupGlobalRateLimiter())
+
 	// CORS setup
 	r.Use(cors.New(cors.Config{
 		AllowOrigins: []string{
-			"http://localhost:3000",                            // Local development
-			"https://front-end-production-ad0d.up.railway.app", // Railway URL
-			"https://www.burogrenstoerisme.nl",                 // Custom domain
-			"https://burogrenstoerisme.nl",                     // Root domain
+			"https://www.burogrenstoerisme.nl", // Custom domain
+			"https://burogrenstoerisme.nl",     // Root domain
 		},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
 	}))
+
+	// Login rate limiter (stricter)
+	loginLimiter := setupLoginRateLimiter()
 
 	// API routes
 	api := r.Group("/api")
 	{
-		// Public routes (geen auth required)
-		api.POST("/login", handlers.Login)
+		// Public routes with strict rate limiting
+		api.POST("/login", loginLimiter, handlers.Login)
 
 		// Public business routes (voor frontend)
 		api.GET("/businesses", handlers.GetBusinesses)
@@ -52,7 +85,7 @@ func main() {
 			admin := protected.Group("/admin")
 			admin.Use(middleware.AdminOnly())
 			{
-				admin.POST("/register", handlers.Register)
+				admin.POST("/register", loginLimiter, handlers.Register) // Also rate limit registration
 				admin.POST("/businesses", handlers.CreateBusiness)
 				// Hier komen later customer/invoice endpoints
 			}
@@ -66,8 +99,17 @@ func main() {
 		}
 	}
 
-	fmt.Println("🚀 Go API Server starting on http://localhost:8080")
-	fmt.Println("🔐 Default Admin: admin@deutschebedrijven.nl / admin123")
-	fmt.Println("👨‍🎓 Default Student: student@deutschebedrijven.nl / student123")
-	r.Run(":8080")
+	// Get port from environment
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	fmt.Println("🚀 Go API Server starting on port", port)
+	fmt.Println("🔒 Production mode - Credentials are secured")
+	fmt.Println("📊 Rate limiting active:")
+	fmt.Println("   - Login: 5 attempts / 15 min")
+	fmt.Println("   - Global: 100 requests / min")
+
+	r.Run(":" + port)
 }

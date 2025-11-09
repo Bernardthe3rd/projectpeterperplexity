@@ -1,52 +1,80 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
+	"os"
 	"projectpeterperplexity/internal/models"
-	"projectpeterperplexity/internal/services"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // AuthMiddleware controleert JWT token
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
+		// Try to get token from cookie first
+		tokenString, err := c.Cookie("token")
 
-		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "Authorization header required",
-			})
+		// Fallback to Authorization header
+		if err != nil || tokenString == "" {
+			authHeader := c.GetHeader("Authorization")
+			if authHeader == "" {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+				c.Abort()
+				return
+			}
+
+			// Parse Bearer token
+			parts := strings.Split(authHeader, " ")
+			if len(parts) != 2 || parts[0] != "Bearer" {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization header"})
+				c.Abort()
+				return
+			}
+			tokenString = parts[1]
+		}
+
+		// Get JWT secret
+		secret := os.Getenv("JWT_SECRET")
+		if secret == "" {
+			secret = "default-secret-key-change-in-production" // Fallback
+		}
+
+		// Validate JWT token
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method")
+			}
+			return []byte(secret), nil
+		})
+
+		if err != nil || !token.Valid {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 			c.Abort()
 			return
 		}
 
-		// Extract token from "Bearer <token>"
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-		if tokenString == authHeader {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "Invalid authorization format",
-			})
+		// Extract claims
+		if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+			userID, ok1 := claims["user_id"].(float64)
+			role, ok2 := claims["role"].(string)
+
+			if !ok1 || !ok2 {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token claims"})
+				c.Abort()
+				return
+			}
+
+			// Set in context (consistent keys!)
+			c.Set("user_id", uint(userID))
+			c.Set("role", models.Role(role)) // ✅ FIXED: Convert to models.Role type
+		} else {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 			c.Abort()
 			return
 		}
-
-		// Validate token
-		claims, err := services.ValidateToken(tokenString)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error":   "Invalid token",
-				"details": err.Error(),
-			})
-			c.Abort()
-			return
-		}
-
-		// Add user info to context
-		c.Set("userID", claims.UserID)
-		c.Set("userEmail", claims.Email)
-		c.Set("userRole", claims.Role)
 
 		c.Next()
 	}
@@ -55,10 +83,20 @@ func AuthMiddleware() gin.HandlerFunc {
 // AdminOnly middleware - alleen voor admin users
 func AdminOnly() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userRole, exists := c.Get("userRole")
+		role, exists := c.Get("role") // ✅ FIXED: Use "role" key
 		if !exists {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "User role not found",
+			})
+			c.Abort()
+			return
+		}
+
+		// Type assertion to models.Role
+		userRole, ok := role.(models.Role)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Invalid role type",
 			})
 			c.Abort()
 			return
@@ -79,10 +117,20 @@ func AdminOnly() gin.HandlerFunc {
 // StudentOrAdmin middleware - voor studenten en admin
 func StudentOrAdmin() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userRole, exists := c.Get("userRole")
+		role, exists := c.Get("role") // ✅ FIXED: Use "role" key
 		if !exists {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error": "User role not found",
+			})
+			c.Abort()
+			return
+		}
+
+		// Type assertion to models.Role
+		userRole, ok := role.(models.Role)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Invalid role type",
 			})
 			c.Abort()
 			return

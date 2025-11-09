@@ -2,13 +2,12 @@ package services
 
 import (
 	"errors"
+	"os"
 	"projectpeterperplexity/internal/models"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
-
-var jwtSecret = []byte("your-secret-key-hier") // In productie via environment variable
 
 type Claims struct {
 	UserID uint        `json:"user_id"`
@@ -18,35 +17,38 @@ type Claims struct {
 }
 
 // GenerateToken genereert JWT token voor gebruiker
-func GenerateToken(user *models.User) (string, error) {
+func GenerateToken(userID uint, role models.Role) (string, error) {
 	expirationTime := time.Now().Add(24 * time.Hour)
 
-	claims := &Claims{
-		UserID: user.ID,
-		Email:  user.Email,
-		Role:   user.Role,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(expirationTime),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-		},
+	claims := jwt.MapClaims{
+		"user_id": userID,
+		"role":    role,
+		"exp":     expirationTime.Unix(),
+		"iat":     time.Now().Unix(),
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString(jwtSecret)
 
-	if err != nil {
-		return "", err
+	// Get JWT secret from environment
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		secret = "default-secret-key-change-in-production"
 	}
 
-	return tokenString, nil
+	return token.SignedString([]byte(secret))
 }
 
 // ValidateToken valideert JWT token
 func ValidateToken(tokenString string) (*Claims, error) {
 	claims := &Claims{}
 
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		secret = "default-secret-key-change-in-production"
+	}
+
 	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-		return jwtSecret, nil
+		return []byte(secret), nil
 	})
 
 	if err != nil {

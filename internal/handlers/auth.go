@@ -4,9 +4,10 @@ import (
 	"net/http"
 	"projectpeterperplexity/internal/config"
 	"projectpeterperplexity/internal/models"
-	"projectpeterperplexity/internal/services"
+	"projectpeterperplexity/internal/services" // ← ADD THIS
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type LoginRequest struct {
@@ -24,55 +25,53 @@ type RegisterRequest struct {
 	University string      `json:"university"`
 }
 
-// Login handler
 func Login(c *gin.Context) {
 	var req LoginRequest
-
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Invalid request data",
-			"details": err.Error(),
-		})
+		c.JSON(400, gin.H{"error": "Invalid request"})
 		return
 	}
 
 	// Find user
 	var user models.User
-	result := config.DB.Where("email = ? AND is_active = ?", req.Email, true).First(&user)
-
-	if result.Error != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "Invalid credentials",
-		})
+	if err := config.DB.Where("email = ?", req.Email).First(&user).Error; err != nil {
+		c.JSON(401, gin.H{"error": "Invalid credentials"})
 		return
 	}
 
-	// Check password
-	if !user.CheckPassword(req.Password) {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "Invalid credentials",
-		})
+	// Verify password (bcrypt)
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+		c.JSON(401, gin.H{"error": "Invalid credentials"})
 		return
 	}
 
-	// Generate token
-	token, err := services.GenerateToken(&user)
+	// Generate JWT (use service)
+	token, err := services.GenerateToken(user.ID, user.Role)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to generate token",
-		})
+		c.JSON(500, gin.H{"error": "Failed to generate token"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"token":   token,
+	// Set secure HTTP-only cookie
+	c.SetSameSite(http.SameSiteStrictMode)
+	c.SetCookie(
+		"token",                // name
+		token,                  // value
+		3600*24,                // maxAge (24 hours)
+		"/",                    // path
+		"burogrenstoerisme.nl", // domain (production)
+		true,                   // secure (HTTPS only)
+		true,                   // httpOnly (not accessible via JS)
+	)
+
+	// Also return in response (for compatibility)
+	c.JSON(200, gin.H{
+		"token": token,
 		"user": gin.H{
-			"id":         user.ID,
-			"email":      user.Email,
-			"first_name": user.FirstName,
-			"last_name":  user.LastName,
-			"role":       user.Role,
+			"id":    user.ID,
+			"email": user.Email,
+			"role":  user.Role,
+			"name":  user.FirstName + " " + user.LastName, // ✅ FIXED
 		},
 	})
 }
